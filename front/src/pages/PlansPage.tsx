@@ -31,6 +31,12 @@ type Payment = {
   description: string;
 };
 
+type PaymentDetails = {
+  amount: number;
+  date: string;
+  status: string;
+};
+
 type ModalMessage = {
   title: string;
   message: string;
@@ -51,6 +57,7 @@ export function PlansPage() {
   const [plans, setPlans] = useState<Plan[]>([]);
   const [activeContract, setActiveContract] = useState<Contract | null>(null);
   const [contractHistory, setContractHistory] = useState<Contract[]>([]);
+  const [selectedHistoryContract, setSelectedHistoryContract] = useState<Contract | null>(null);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -239,8 +246,13 @@ export function PlansPage() {
             <div>
               <strong>Plano Ativo:</strong> {activeContract.plan?.description} - R$ {formatPrice(activeContract.monthly_amount)} / mês
               <div className="text-sm mt-1">
-                Próximo pagamento: {new Date(activeContract.started_at).toLocaleDateString('pt-BR')}
-              </div>
+              Próximo pagamento: {(() => {
+                const [ano, mes, dia] = activeContract.started_at.split('-').map(Number);
+                const data = new Date(ano, mes - 1, dia);
+                data.setMonth(data.getMonth() + 1);
+                return data.toLocaleDateString('pt-BR');
+              })()}
+            </div>
             </div>
             <span className="bg-green-600 text-white px-2 py-1 rounded-full text-xs">
               Ativo
@@ -323,7 +335,11 @@ export function PlansPage() {
       ) : (
         <div className="space-y-3 mb-6">
           {contractHistory.map((contract) => (
-            <div key={contract.id} className="border p-4 rounded-md bg-gray-50 hover:bg-gray-100 transition">
+              <div 
+    key={contract.id} 
+    className="border p-4 rounded-md bg-gray-50 hover:bg-gray-100 transition cursor-pointer"
+    onClick={() => setSelectedHistoryContract(contract)}
+  >
               <div className="flex justify-between items-start">
                 <div className="font-semibold">{contract.plan?.description}</div>
                 <span className={`px-2 py-1 text-xs rounded-full ${
@@ -341,8 +357,11 @@ export function PlansPage() {
                 <div className="text-sm text-gray-600">
                   <div>Início:</div>
                   <div className="font-medium">
-                    {new Date(contract.started_at).toLocaleDateString('pt-BR')}
-                  </div>
+                  {(() => {
+                    const [ano, mes, dia] = contract.started_at.split('-');
+                    return `${dia}/${mes}/${ano}`;
+                  })()}
+                </div>
                 </div>
                 <div className="text-sm text-gray-600">
                   <div>Término:</div>
@@ -354,6 +373,58 @@ export function PlansPage() {
             </div>
           ))}
         </div>
+      )}
+
+      {/* Modal de hisytórico */}
+      {selectedHistoryContract && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg max-w-md w-full shadow-lg">
+      <h2 className="text-xl font-bold mb-4">Detalhes do Contrato</h2>
+      
+      <div className="space-y-3">
+        <div>
+          <h3 className="font-semibold">Plano:</h3>
+          <p>{selectedHistoryContract.plan.description}</p>
+        </div>
+        
+        <div>
+          <h3 className="font-semibold">Valor Mensal:</h3>
+          <p>R$ {formatPrice(selectedHistoryContract.monthly_amount)}</p>
+        </div>
+        
+        <div>
+          <h3 className="font-semibold">Período:</h3>
+          <p>
+            {new Date(selectedHistoryContract.started_at).toLocaleDateString('pt-BR')} 
+            {' → '}
+            {selectedHistoryContract.ended_at 
+              ? new Date(selectedHistoryContract.ended_at).toLocaleDateString('pt-BR')
+              : 'Atual'}
+          </p>
+        </div>
+        
+        <div className="mt-4">
+          <h3 className="font-semibold mb-2">Pagamentos:</h3>
+          {payments
+            .filter(p => p.contract_id === selectedHistoryContract.id)
+            .map(payment => (
+              <div key={payment.id} className="border-t pt-2">
+                <p>Valor: R$ {formatPrice(payment.amount)}</p>
+                <p>Data: {new Date(payment.due_date).toLocaleDateString('pt-BR')}</p>
+                <p>Status: {payment.status === 'paid' ? 'Pago' : 'Pendente'}</p>
+              </div>
+            ))}
+        </div>
+      </div>
+
+      <button
+        onClick={() => setSelectedHistoryContract(null)}
+        className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded"
+      >
+        Fechar
+      </button>
+    </div>
+  </div>
       )}
 
       {/* Modal de Mensagem */}
