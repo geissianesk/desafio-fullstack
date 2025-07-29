@@ -57,6 +57,8 @@ class ContractController extends Controller
                 'status' => 'active',
                 'started_at' => now(),
                 'next_billing_date' => now()->addMonth(),
+                'applied_credit' => $credit,
+                'previous_plan_id' => $currentContract->plan_id,
             ]);
 
             Payment::create([
@@ -73,7 +75,6 @@ class ContractController extends Controller
                 'contract' => $contract->load('plan'),
                 'message' => 'Contrato criado com sucesso!'
             ], 201);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([
@@ -111,13 +112,20 @@ class ContractController extends Controller
             $dailyRate = $currentContract->monthly_amount / $daysInMonth;
             $credit = $dailyRate * ($daysInMonth - $daysUsed);
 
+            $originalDay = Carbon::parse($currentContract->started_at)->day;
+            $nextBillingDate = now()->day($originalDay);
+
+            if ($nextBillingDate->lessThan(now())) {
+                $nextBillingDate->addMonth();
+            }
+
             $newContract = Contract::create([
                 'user_id' => $user->id,
                 'plan_id' => $newPlan->id,
                 'monthly_amount' => $newPlan->price,
                 'status' => 'active',
                 'started_at' => now(),
-                'next_billing_date' => now()->addMonth(),
+                'next_billing_date' => $nextBillingDate,
             ]);
 
             $adjustedAmount = max($newPlan->price - $credit, 0);
@@ -142,7 +150,6 @@ class ContractController extends Controller
                 'credit_applied' => $credit,
                 'message' => 'Plano alterado com sucesso!'
             ]);
-
         } catch (\Exception $e) {
             DB::rollBack();
             return response()->json([

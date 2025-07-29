@@ -23,6 +23,8 @@ public function up()
         $table->timestamps();
         $table->date('next_billing_date')->after('ended_at');
         $table->decimal('monthly_amount', 10, 2)->after('plan_id');
+        $table->decimal('applied_credit', 10, 2)->default(0)->after('monthly_amount');
+        $table->foreignId('previous_plan_id')->nullable()->constrained('plans');
     });
 }
     /**
