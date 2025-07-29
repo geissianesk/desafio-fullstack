@@ -1,12 +1,14 @@
-import { BrowserRouter } from "react-router-dom";
-import { Router } from "./Router";
+import { PlansPage } from './pages/PlansPage';
 
-export function App() {
-
+function App() {
   return (
-    <BrowserRouter>
-      <Router />
-    </BrowserRouter>
-  )
+    <div className="min-h-screen bg-gray-50">
+      <header className="bg-white shadow-sm">
+      </header>
+      <main>
+        <PlansPage />
+      </main>
+    </div>
+  );
 }
-
+export default App;

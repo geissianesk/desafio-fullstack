@@ -1,10 +1,11 @@
-import { Route, Routes } from 'react-router-dom'
-import { Home } from './pages/Home'
+// Arquivo: Router.tsx
+import { Routes, Route } from 'react-router-dom';
+import { PlansPage } from './pages/PlansPage';
 
 export function Router() {
   return (
     <Routes>
-      <Route index path="/" element={<Home />} />
+      <Route path="/plans" element={<PlansPage />} />
     </Routes>
-  )
+  );
 }
