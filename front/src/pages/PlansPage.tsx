@@ -21,6 +21,16 @@ type Contract = {
   started_at: string;
   ended_at?: string;
   monthly_amount: number;
+   applied_credit: number;
+   remaining_credit?: number; 
+};
+
+type CreditHistory = {
+  id: number;
+  amount: number;
+  description: string;
+  date: string;
+  contract_id: number;
 };
 
 type Payment = {
@@ -29,12 +39,6 @@ type Payment = {
   due_date: string;
   status: "pending" | "paid" | "credited";
   description: string;
-};
-
-type PaymentDetails = {
-  amount: number;
-  date: string;
-  status: string;
 };
 
 type ModalMessage = {
@@ -53,6 +57,7 @@ type PaymentSimulation = {
 };
 
 export function PlansPage() {
+  const [creditHistory, setCreditHistory] = useState<CreditHistory[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [activeContract, setActiveContract] = useState<Contract | null>(null);
@@ -76,7 +81,6 @@ export function PlansPage() {
     useState<PaymentSimulation | null>(null);
   const [showPaymentSimulation, setShowPaymentSimulation] = useState(false);
 
-  // Fechar modal ao clicar fora
   const handleCloseModal = (e: React.MouseEvent) => {
     if (e.target === e.currentTarget) {
       setShowUpgradeModal(false);
@@ -97,15 +101,17 @@ export function PlansPage() {
         const userLogado = await userResponse.json();
         const userId = userLogado.id;
 
-        const [userRes, plansRes, activeRes, historyRes, paymentsRes] =
+        const [userRes, plansRes, activeRes, historyRes, paymentsRes, creditsRes] =
           await Promise.all([
             fetch(`http://localhost:8000/api/user/${userId}`),
             fetch("http://localhost:8000/api/plans"),
             fetch(`http://localhost:8000/api/contract-active/${userId}`),
             fetch(`http://localhost:8000/api/contracts/${userId}`),
             fetch(`http://localhost:8000/api/payments?user_id=${userId}`),
+            fetch(`http://localhost:8000/api/credits?user_id=${userId}`),
           ]);
 
+          const creditsData = creditsRes.ok ? await creditsRes.json() : [];
         const userData = await userRes.json();
         const plansData = await plansRes.json();
         const activeData = activeRes.ok
@@ -114,6 +120,7 @@ export function PlansPage() {
         const historyData = await historyRes.json();
         const paymentsData = paymentsRes.ok ? await paymentsRes.json() : [];
 
+        setCreditHistory(creditsData);
         setUser(userData);
         setPlans(plansData);
         setActiveContract(activeData.contract);
@@ -161,73 +168,100 @@ export function PlansPage() {
     }
   };
 
-  const handleSimulatePayment = async () => {
-    if (!selectedPlan || !user) return;
+const handleSimulatePayment = async () => {
+  if (!selectedPlan || !user) return;
 
-    try {
-      // Calcula créditos se for upgrade/downgrade
-      let credit = 0;
-      let daysUsed = 0;
+  try {
+    // Calcula créditos se for upgrade/downgrade
+    const credit = 0;
+    let daysUsed = 0;
+    let nextPaymentDate = new Date().toISOString().split('T')[0]; // Data atual como padrão
 
-      if (activeContract) {
-        const startDate = new Date(activeContract.started_at);
-        const today = new Date();
-        daysUsed = Math.floor(
-          (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
-        );
-
-        // Calcula o valor proporcional dos dias não utilizados
-        const dailyRate = activeContract.monthly_amount / 30; // Simplificação: 30 dias/mês
-        const unusedDays = 30 - daysUsed;
-        credit = unusedDays > 0 ? unusedDays * dailyRate : 0;
-      }
-
-      const endpoint = activeContract ? "/contracts/upgrade" : "/contracts";
-      const body = {
-        user_id: user.id,
-        plan_id: selectedPlan.id,
-        credit_amount: credit,
-        days_used: daysUsed,
-      };
-
-      const response = await fetch(`http://localhost:8000/api${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Falha na operação");
-      }
-
-      const data = await response.json();
-
-      // Mostra a simulação antes de confirmar
-      if (activeContract) {
-        setPaymentSimulation({
-          previousPlan: activeContract.plan,
-          newPlan: selectedPlan,
-          daysUsed,
-          creditAmount: credit,
-          newMonthlyAmount: data.contract.monthly_amount,
-          nextPaymentDate: data.contract.started_at,
-        });
-        setShowPaymentSimulation(true);
-      } else {
-        // Contratação nova - confirma diretamente
-        confirmContract(data.contract, data.payments);
-      }
-    } catch (error) {
-      showMessage(
-        "Erro",
-        error instanceof Error ? error.message : "Ocorreu um erro",
-        "error"
+if (activeContract) {
+      const startDate = new Date(activeContract.started_at);
+      const today = new Date();
+      daysUsed = Math.floor(
+        (today.getTime() - startDate.getTime()) / (1000 * 60 * 60 * 24)
       );
-    }
-  };
 
-  // Função para confirmar a contratação/upgrade
+        const originalDueDate = new Date(startDate);
+        originalDueDate.setMonth(originalDueDate.getMonth() + 1); 
+        nextPaymentDate = originalDueDate.toISOString().split('T')[0];
+}
+
+    // Calcula o valor líquido do primeiro pagamento (aplicando o crédito)
+    const firstPaymentAmount = Math.max(selectedPlan.price - credit, 0);
+    const remainingCredit = Math.max(credit - selectedPlan.price, 0);
+
+    // Cria os pagamentos
+    const paymentsToCreate = [
+      {
+        amount: firstPaymentAmount,
+        due_date: nextPaymentDate,
+        status: "pending",
+        description: `Pagamento mensal - ${selectedPlan.description}`
+      }
+    ];
+
+    // Se ainda houver crédito remanescente, cria um pagamento com valor negativo
+    if (remainingCredit > 0) {
+      const nextMonth = new Date(nextPaymentDate);
+      nextMonth.setMonth(nextMonth.getMonth() + 1);
+      
+      paymentsToCreate.push({
+        amount: -remainingCredit,
+        due_date: nextMonth.toISOString().split('T')[0],
+        status: "credited",
+        description: `Crédito remanescente - ${selectedPlan.description}`
+      });
+    }
+
+    const endpoint = activeContract ? "/contracts/upgrade" : "/contracts";
+    const body = {
+      user_id: user.id,
+      plan_id: selectedPlan.id,
+      credit_amount: credit,
+      days_used: daysUsed,
+      payments: paymentsToCreate,
+      keep_original_due_date: true,
+    };
+
+    const response = await fetch(`http://localhost:8000/api${endpoint}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Falha na operação");
+    }
+
+    const data = await response.json();
+
+    // Mostra a simulação antes de confirmar
+    if (activeContract) {
+      setPaymentSimulation({
+        previousPlan: activeContract.plan,
+        newPlan: selectedPlan,
+        daysUsed,
+        creditAmount: credit,
+        newMonthlyAmount: selectedPlan.price,
+        nextPaymentDate: nextPaymentDate,
+        payments: paymentsToCreate
+      });
+      setShowPaymentSimulation(true);
+    } else {
+       confirmContract(data.contract, data.payments);
+    }
+  } catch (error) {
+    showMessage(
+      "Erro",
+      error instanceof Error ? error.message : "Ocorreu um erro",
+      "error"
+    );
+  }
+};
   const confirmContract = (contract: Contract, newPayments: Payment[]) => {
     setActiveContract(contract);
     setContractHistory([contract, ...contractHistory]);
@@ -433,79 +467,150 @@ export function PlansPage() {
         </div>
       )}
 
-      {/* Modal de hisytórico */}
-      {selectedHistoryContract && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg max-w-md w-full shadow-lg">
-            <h2 className="text-xl font-bold mb-4">Detalhes do Contrato</h2>
+{/* Modal de Histórico */}
+{selectedHistoryContract && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="bg-white p-6 rounded-lg max-w-md w-full shadow-lg">
+      <div className="flex justify-between items-start mb-4">
+        <h2 className="text-xl font-bold">Detalhes do Contrato</h2>
+        <button 
+          onClick={() => setSelectedHistoryContract(null)}
+          className="text-gray-500 hover:text-gray-700"
+        >
+          ✕
+        </button>
+      </div>
 
-            <div className="space-y-3">
-              <div>
-                <h3 className="font-semibold">Plano:</h3>
-                <p>{selectedHistoryContract.plan.description}</p>
+      {/* Informações Básicas do Contrato */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">Plano</h3>
+          <p className="font-medium">{selectedHistoryContract.plan.description}</p>
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">Valor Mensal</h3>
+          <p className="font-medium">R$ {Number(selectedHistoryContract.monthly_amount).toFixed(2)}</p>
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">Início</h3>
+          <p>{new Date(selectedHistoryContract.started_at).toLocaleDateString('pt-BR')}</p>
+        </div>
+        <div>
+          <h3 className="text-sm font-medium text-gray-500">Término</h3>
+          <p>
+            {selectedHistoryContract.ended_at 
+              ? new Date(selectedHistoryContract.ended_at).toLocaleDateString('pt-BR') 
+              : 'Atual'}
+          </p>
+        </div>
+      </div>
+
+      <div className="border-t border-gray-200 my-4"></div>
+
+      <div className="space-y-4">
+        <h3 className="font-semibold text-lg">Movimentações</h3>
+        
+        {selectedHistoryContract.applied_credit > 0 && (
+          <div className="p-3 bg-blue-50 rounded-lg border border-blue-100">
+            <div className="flex items-center gap-2">
+              <div className="bg-blue-100 p-1 rounded-full">
+                <svg className="w-4 h-4 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5 13l4 4L19 7"/>
+                </svg>
               </div>
-
               <div>
-                <h3 className="font-semibold">Valor Mensal:</h3>
-                <p>R$ {formatPrice(selectedHistoryContract.monthly_amount)}</p>
-              </div>
-
-              <div>
-                <h3 className="font-semibold">Período:</h3>
-                <p>
-                  {new Date(
-                    selectedHistoryContract.started_at
-                  ).toLocaleDateString("pt-BR")}
-                  {" → "}
-                  {selectedHistoryContract.ended_at
-                    ? new Date(
-                        selectedHistoryContract.ended_at
-                      ).toLocaleDateString("pt-BR")
-                    : "Atual"}
-                </p>
-              </div>
-
-              <div className="mt-4">
-                <h3 className="font-semibold mb-2">Pagamentos:</h3>
-                {payments
-                  .filter((p) => p.contract_id === selectedHistoryContract.id)
-                  .map((payment) => (
-                    <div key={payment.id} className="border-t pt-2">
-                      <p>Valor: R$ {formatPrice(payment.amount)}</p>
-                      <p>
-                        Data:{" "}
-                        {new Date(payment.due_date).toLocaleDateString("pt-BR")}
-                      </p>
-                      <p>
-                        Status:{" "}
-                        {payment.status === "paid" ? "Pago" : "Pendente"}
-                      </p>
-                    </div>
-                  ))}
-
-                {selectedHistoryContract.applied_credit > 0 && (
-                  <div className="p-3 bg-blue-50 rounded">
-                    <h3 className="font-semibold">Crédito Aplicado:</h3>
-                    <p>
-                      R$ {formatPrice(selectedHistoryContract.applied_credit)}
-                    </p>
-                    <p className="text-sm text-gray-600">
-                      Crédito referente a dias não utilizados do plano anterior
-                    </p>
-                  </div>
-                )}
+                <h4 className="font-medium text-blue-800">Crédito Aplicado</h4>
+                <p className="text-blue-600">R$ {selectedHistoryContract.applied_credit.toFixed(2)}</p>
               </div>
             </div>
+          </div>
+        )}
 
-            <button
-              onClick={() => setSelectedHistoryContract(null)}
-              className="mt-4 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded"
-            >
-              Fechar
-            </button>
+        {selectedHistoryContract.remaining_credit > 0 && (
+          <div className="p-3 bg-green-50 rounded-lg border border-green-100">
+            <div className="flex items-center gap-2">
+              <div className="bg-green-100 p-1 rounded-full">
+                <svg className="w-4 h-4 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+              </div>
+              <div>
+                <h4 className="font-medium text-green-800">Saldo Disponível</h4>
+                <p className="text-green-600">R$ {selectedHistoryContract.remaining_credit.toFixed(2)}</p>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        <div>
+          <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-2">
+            <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+            </svg>
+            Linha do Tempo
+          </h4>
+          
+          <div className="space-y-3">
+            {payments
+              .filter((p) => p.contract_id === selectedHistoryContract.id)
+              .sort((a, b) => new Date(b.due_date).getTime() - new Date(a.due_date).getTime())
+              .map((payment) => (
+                <div key={payment.id} className="flex gap-3">
+                  <div className="flex flex-col items-center">
+                    <div className={`w-2 h-2 rounded-full mt-1 ${
+                      payment.status === 'paid' ? 'bg-green-500' : 'bg-yellow-500'
+                    }`}></div>
+                    {payment.amount < 0 && (
+                      <div className="w-px h-full bg-gray-200"></div>
+                    )}
+                  </div>
+                  <div className="flex-1 pb-3">
+                    <div className={`p-3 rounded-lg ${
+                      payment.amount > 0 
+                        ? 'bg-red-50 border border-red-100' 
+                        : 'bg-green-50 border border-green-100'
+                    }`}>
+                      <div className="flex justify-between">
+                        <span className={`font-medium ${
+                          payment.amount > 0 ? 'text-red-800' : 'text-green-800'
+                        }`}>
+                          {payment.amount > 0 ? 'Pagamento' : 'Crédito'}
+                        </span>
+                        <span className={`font-bold ${
+                          payment.amount > 0 ? 'text-red-600' : 'text-green-600'
+                        }`}>
+                          {payment.amount > 0 ? '-' : '+'}R$ {Math.abs(payment.amount).toFixed(2)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between text-sm mt-1">
+                        <span className="text-gray-500">
+                          {new Date(payment.due_date).toLocaleDateString('pt-BR')}
+                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full ${
+                          payment.status === 'paid' 
+                            ? 'bg-green-100 text-green-800' 
+                            : 'bg-yellow-100 text-yellow-800'
+                        }`}>
+                          {payment.status === 'paid' ? 'Pago' : 'Pendente'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ))}
           </div>
         </div>
-      )}
+      </div>
+
+      <button
+        onClick={() => setSelectedHistoryContract(null)}
+        className="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded transition"
+      >
+        Fechar
+      </button>
+    </div>
+  </div>
+)}
 
       {/* Modal de Mensagem */}
       {showMessageModal && (
@@ -607,45 +712,93 @@ export function PlansPage() {
           onClick={handleCloseModal}
         >
           <div className="bg-white p-6 rounded-lg max-w-md w-full shadow-lg">
-            <h2 className="text-xl font-bold mb-2">Pagamento via PIX</h2>
+            <h2 className="text-xl font-bold mb-2">
+              {activeContract ? "Atualização de Plano" : "Confirmação de Contratação"}
+            </h2>
             <p className="text-gray-700 mb-4">
               {activeContract
-                ? `Atualizando para o plano ${selectedPlan.description}`
-                : `Assinando o plano ${selectedPlan.description}`}
+                ? `Mudando para: ${selectedPlan.description}`
+                : `Assinando: ${selectedPlan.description}`}
             </p>
 
-            <div className="mb-4">
-              <p className="text-sm text-gray-600 mb-2">Código PIX:</p>
-              <textarea
-                value={pixCode}
-                readOnly
-                className="w-full h-32 p-2 border rounded font-mono text-sm"
-              />
-            </div>
-
-            {paymentSimulation?.creditAmount > 0 && (
-              <div className="mb-4 p-3 bg-green-50 rounded">
-                <h3 className="font-semibold">Crédito:</h3>
-                <p>R$ {formatPrice(paymentSimulation.creditAmount)}</p>
-                <p className="text-sm">Valor será descontado do pagamento</p>
+            {/* Seção de Crédito/PIX */}
+            {paymentSimulation?.creditAmount >= selectedPlan.price ? (
+              // Caso 1: Crédito cobre totalmente o plano
+              <div className="mb-4 p-3 bg-green-50 rounded border border-green-200">
+                <div className="flex items-center gap-2">
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-5 w-5 text-green-600"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                  <h3 className="font-semibold text-green-800">Crédito Suficiente!</h3>
+                </div>
+                <p className="mt-1 text-sm text-green-700">
+                  Seu crédito de <strong>R$ {formatPrice(paymentSimulation.creditAmount)}</strong> cobre o valor do plano (
+                  <strong>R$ {formatPrice(selectedPlan.price)}</strong>). Nenhum pagamento é necessário.
+                </p>
               </div>
+            ) : (
+              // Caso 2: Mostrar PIX (com crédito parcial ou sem crédito)
+              <>
+                {paymentSimulation?.creditAmount > 0 && (
+                  <div className="mb-4 p-3 bg-blue-50 rounded border border-blue-200">
+                    <h3 className="font-semibold text-blue-800">Crédito Disponível</h3>
+                    <p className="text-sm text-blue-700">
+                      Será aplicado um desconto de <strong>R$ {formatPrice(paymentSimulation.creditAmount)}</strong> no pagamento.
+                    </p>
+                  </div>
+                )}
+
+                <div className="mb-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="text-sm font-medium text-gray-600">Valor a Pagar:</span>
+                    <span className="font-bold">
+                      R$ {formatPrice(
+                        Math.max(selectedPlan.price - (paymentSimulation?.creditAmount || 0), 0)
+                      )}
+                    </span>
+                  </div>
+                  <p className="text-sm text-gray-600 mb-2">Código PIX (Copie e cole no seu app):</p>
+                  <textarea
+                    value={pixCode}
+                    readOnly
+                    className="w-full h-32 p-2 border rounded font-mono text-sm bg-gray-50"
+                    onClick={(e) => e.currentTarget.select()}
+                  />
+                </div>
+              </>
             )}
 
-            <div className="flex gap-3">
+            {/* Botões de Ação */}
+            <div className="flex gap-3 mt-4">
               <button
                 onClick={() => {
                   setSelectedPlan(null);
                   setPixCode(null);
                 }}
-                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 rounded"
+                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 rounded transition"
               >
                 Cancelar
               </button>
               <button
                 onClick={handleSimulatePayment}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white py-2 rounded"
+                className={`flex-1 py-2 rounded transition ${
+                  paymentSimulation?.creditAmount >= selectedPlan.price
+                    ? "bg-green-600 hover:bg-green-700"
+                    : "bg-blue-600 hover:bg-blue-700"
+                } text-white`}
               >
-                {activeContract
+                {paymentSimulation?.creditAmount >= selectedPlan.price
+                  ? "Confirmar com Crédito"
+                  : activeContract
                   ? "Confirmar Atualização"
                   : "Confirmar Contratação"}
               </button>
@@ -693,12 +846,7 @@ export function PlansPage() {
                 <h3 className="font-semibold">Próximo Pagamento:</h3>
                 <p>
                   Próximo pagamento:{" "}
-                  {(() => {
-                    const originalDate = new Date(activeContract.started_at);
-                    const nextDate = new Date(originalDate);
-                    nextDate.setMonth(new Date().getMonth() + 1);
-                    return nextDate.toLocaleDateString("pt-BR");
-                  })()}
+                  {new Date(paymentSimulation.nextPaymentDate).toLocaleDateString("pt-BR")}
                 </p>
                 <p className="text-sm text-gray-600">
                   Valor: R$ {formatPrice(paymentSimulation.newMonthlyAmount)}

@@ -83,7 +83,6 @@ Route::post('/contracts', function (Request $request) {
     ], 201);
 });
 
-Route::middleware('auth:api')->group(function () {
 
     Route::post('/contracts/upgrade', function (Request $request) {
         $data = $request->validate([
@@ -142,10 +141,8 @@ Route::middleware('auth:api')->group(function () {
 
         return response()->json($payments);
     });
-});
 
 
-// Contratação inicial
 Route::post('/contracts', function (Request $request) {
     $validated = $request->validate([
         'user_id' => 'required|exists:users,id',
@@ -188,7 +185,6 @@ Route::post('/contracts', function (Request $request) {
     }
 });
 
-// Troca de plano
 Route::post('/contracts/upgrade', function (Request $request) {
     $data = $request->validate([
         'user_id' => 'required|exists:users,id',
@@ -209,13 +205,11 @@ Route::post('/contracts/upgrade', function (Request $request) {
         $dailyRate = $currentContract->monthly_amount / $daysInMonth;
         $credit = $dailyRate * ($daysInMonth - $daysUsed);
 
-        // Encerra contrato atual
         $currentContract->update([
             'status' => 'inactive',
             'ended_at' => now()
         ]);
 
-        // Cria novo contrato
         $newContract = Contract::create([
             'user_id' => $user->id,
             'plan_id' => $newPlan->id,
@@ -225,10 +219,8 @@ Route::post('/contracts/upgrade', function (Request $request) {
             'next_billing_date' => now()->addMonth()
         ]);
 
-        // Calcula valor ajustado
         $adjustedAmount = max($newPlan->price - $credit, 0);
 
-        // Cria pagamento ajustado
         Payment::create([
             'contract_id' => $newContract->id,
             'amount' => $adjustedAmount,
@@ -249,4 +241,16 @@ Route::post('/contracts/upgrade', function (Request $request) {
         DB::rollBack();
         return response()->json(['error' => $e->getMessage()], 500);
     }
+});
+
+Route::get('/credits', function (Request $request) {
+    $userId = $request->query('user_id');
+
+    $credits = Payment::whereHas('contract', function($query) use ($userId) {
+                $query->where('user_id', $userId);
+            })
+            ->where('status', 'credited')
+            ->get();
+
+    return response()->json($credits);
 });
