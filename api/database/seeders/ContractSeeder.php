@@ -15,11 +15,5 @@ class ContractSeeder extends Seeder
      */
     public function run()
     {
-        Contract::create([
-            'user_id' => 6,
-            'plan_id' => 31,
-            'status' => 'active',
-            'started_at' => now(),
-        ]);
     }
 } 
