@@ -63,7 +63,7 @@ class ContractController extends Controller
                 'contract_id' => $contract->id,
                 'amount' => $plan->price,
                 'due_date' => $contract->next_billing_date,
-                'status' => 'pending',
+                'status' => 'paid',
                 'description' => 'Pagamento inicial'
             ]);
 
@@ -126,7 +126,7 @@ class ContractController extends Controller
                 'contract_id' => $newContract->id,
                 'amount' => $adjustedAmount,
                 'due_date' => $newContract->next_billing_date,
-                'status' => 'pending',
+                'status' => 'paid',
                 'description' => 'Pagamento ajustado - crédito de R$ ' . number_format($credit, 2)
             ]);
 
