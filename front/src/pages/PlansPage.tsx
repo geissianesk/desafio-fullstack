@@ -57,7 +57,8 @@ type PaymentSimulation = {
 };
 
 export function PlansPage() {
-  const [creditHistory, setCreditHistory] = useState<CreditHistory[]>([]);
+  const [selectedPayment, setSelectedPayment] = useState<Payment | null>(null);
+const [creditHistory, setCreditHistory] = useState<any[]>([]);
   const [user, setUser] = useState<User | null>(null);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [activeContract, setActiveContract] = useState<Contract | null>(null);
@@ -90,6 +91,61 @@ export function PlansPage() {
       setShowPaymentSimulation(false);
     }
   };
+
+const handleGeneratePix = async (paymentId: number) => {
+  try {
+    const pixCode = generatePixCode();
+    
+    const response = await fetch(`http://localhost:8000/api/payments/${paymentId}/pay`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pix_code: pixCode })
+    });
+
+    if (response.ok) {
+      setPayments(payments.map(p => 
+        p.id === paymentId ? { ...p, status: 'paid' } : p
+      ));
+      
+      showMessage("Sucesso!", "Pagamento confirmado via PIX", "success");
+    }
+  } catch (error) {
+    showMessage("Erro", "Falha ao processar PIX", "error");
+  }
+};
+
+  const handleUseCredit = async (creditId: number, paymentId: number) => {
+  try {
+    const response = await fetch('http://localhost:8000/api/use-credit', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        credit_id: creditId,
+        payment_id: paymentId
+      }),
+    });
+
+    if (!response.ok) throw new Error('Falha ao usar crédito');
+
+    const updatedPayments = payments.map(p => 
+      p.id === paymentId ? { ...p, status: 'paid' } : p
+    );
+    setPayments(updatedPayments);
+
+    const updatedCredits = creditHistory.map(c => 
+      c.id === creditId ? { ...c, is_used: true } : c
+    );
+    setCreditHistory(updatedCredits);
+
+    setSelectedPayment(null);
+    showMessage("Sucesso", "Crédito aplicado com sucesso!", "success");
+
+  } catch (error) {
+    showMessage("Erro", error.message, "error");
+  }
+};
 
   useEffect(() => {
     async function loadData() {
@@ -348,11 +404,69 @@ if (activeContract) {
                   <div className="text-sm text-gray-600">
                     {payment.description}
                   </div>
+                  <button 
+              onClick={() => setSelectedPayment(payment)}
+              className="absolute -top-2 -right-2 bg-green-500 text-white rounded-full p-2 hover:bg-green-600 transition"
+              title="Usar créditos"
+            >
+            </button>
+                  <button
+        onClick={() => handleGeneratePix(payment.id)}
+        className="bg-green-500 hover:bg-green-600 text-white px-3 py-1 rounded ml-4 text-sm"
+      >
+Marcar como pago
+      </button>
                 </div>
               ))}
           </div>
         </div>
       )}
+
+      {/* Modal de Uso de Créditos */}
+{selectedPayment && (
+  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+    <div className="bg-white rounded-lg shadow-xl w-full max-w-md">
+      <div className="p-6">
+        <h2 className="text-xl font-bold mb-4">Usar Créditos</h2>
+        
+        <div className="mb-4 p-4 bg-blue-50 rounded-lg">
+          <h3 className="font-semibold">Pagamento Pendente</h3>
+          <p>Valor: R$ {formatPrice(selectedPayment.amount)}</p>
+          <p>Vencimento: {new Date(selectedPayment.due_date).toLocaleDateString('pt-BR')}</p>
+        </div>
+
+        <div className="mb-4">
+          <h3 className="font-semibold mb-2">Seus Créditos Disponíveis</h3>
+          {creditHistory
+            .filter(credit => !credit.is_used && new Date(credit.expires_at) > new Date())
+            .map(credit => (
+              <div key={credit.id} className="flex items-center justify-between p-2 border-b">
+                <div>
+                  <p>R$ {formatPrice(credit.amount)}</p>
+                  <p className="text-xs text-gray-500">
+                    Expira em: {new Date(credit.expires_at).toLocaleDateString('pt-BR')}
+                  </p>
+                </div>
+                <button 
+                  onClick={() => handleUseCredit(credit.id, selectedPayment.id)}
+                  className="bg-green-500 text-white px-3 py-1 rounded text-sm"
+                >
+                  Usar
+                </button>
+              </div>
+            ))}
+        </div>
+
+        <button
+          onClick={() => setSelectedPayment(null)}
+          className="w-full bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 rounded"
+        >
+          Fechar
+        </button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* Planos disponíveis */}
       <h2 className="text-xl font-semibold mb-4">Planos Disponíveis</h2>
@@ -541,7 +655,7 @@ if (activeContract) {
             </div>
           </div>
         )}
-        
+
         <div>
           <h4 className="font-medium text-gray-700 mb-2 flex items-center gap-2">
             <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">

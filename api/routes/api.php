@@ -6,6 +6,7 @@ use Illuminate\Support\Facades\Response;
 use App\Models\Plan;
 use App\Models\User;
 use App\Models\Contract;
+use App\Models\Credit;
 use App\Models\Payment;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
@@ -18,6 +19,18 @@ Route::get('/plans', function () {
 
 Route::get('/user/{id}', function ($id) {
     return User::findOrFail($id);
+});
+
+Route::post('/payments/{id}/pay', function ($paymentId, Request $request) {
+    $payment = Payment::findOrFail($paymentId);
+    
+    $payment->update([
+        'status' => 'paid',
+        'paid_at' => now(),
+        'pix_code' => $request->pix_code
+    ]);
+
+    return response()->json(['success' => true]);
 });
 
 
@@ -115,7 +128,7 @@ Route::post('/contracts', function (Request $request) {
             'contract_id' => $newContract->id,
             'amount' => $newPlan->price,
             'due_date' => now()->addDays(7),
-            'status' => 'pending',
+            'status' => 'paid',
             'description' => 'Pagamento do novo plano',
         ]);
 
@@ -253,4 +266,40 @@ Route::get('/credits', function (Request $request) {
             ->get();
 
     return response()->json($credits);
+});
+
+Route::post('/payments/credit', function (Request $request) {
+    $payment = Payment::create([
+        'user_id' => $request->user_id,
+        'amount' => -$request->amount,
+        'due_date' => $request->expires_at,
+        'status' => 'credited',
+        'description' => 'Crédito para futuras renovações'
+    ]);
+    
+    return response()->json($payment);
+});
+
+
+Route::post('/use-credit', function (Request $request) {
+    DB::transaction(function () use ($request) {
+        $credit = Credit::findOrFail($request->credit_id);
+        $payment = Payment::findOrFail($request->payment_id);
+
+        if ($credit->is_used || $credit->expires_at < now()) {
+            throw new \Exception("Crédito já utilizado ou expirado");
+        }
+
+        if ($payment->status !== 'pending') {
+            throw new \Exception("Pagamento já foi processado");
+        }
+
+        $credit->update(['is_used' => true]);
+        $payment->update([
+            'status' => 'paid',
+            'paid_at' => now()
+        ]);
+    });
+
+    return response()->json(['success' => true]);
 });
